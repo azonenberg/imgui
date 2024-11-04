@@ -172,6 +172,8 @@ struct ImGui_ImplGlfw_Data
     double                  Time;
     GLFWwindow*             MouseWindow;
     GLFWcursor*             MouseCursors[ImGuiMouseCursor_COUNT];
+    bool                    MouseIgnoreButtonUpWaitForFocusLoss;
+    bool                    MouseIgnoreButtonUp;
     ImVec2                  LastValidMousePos;
     GLFWwindow*             KeyOwnerWindows[GLFW_KEY_LAST];
     bool                    InstalledCallbacks;
@@ -369,6 +371,10 @@ void ImGui_ImplGlfw_MouseButtonCallback(GLFWwindow* window, int button, int acti
     if (bd->PrevUserCallbackMousebutton != nullptr && ImGui_ImplGlfw_ShouldChainCallback(window))
         bd->PrevUserCallbackMousebutton(window, button, action, mods);
 
+    // Workaround for Linux: ignore mouse up events which are following an focus loss following a viewport creation
+    if (bd->MouseIgnoreButtonUp && action == GLFW_RELEASE)
+        return;
+
     ImGui_ImplGlfw_UpdateKeyModifiers(window);
 
     ImGuiIO& io = ImGui::GetIO();
@@ -452,6 +458,10 @@ void ImGui_ImplGlfw_WindowFocusCallback(GLFWwindow* window, int focused)
     ImGui_ImplGlfw_Data* bd = ImGui_ImplGlfw_GetBackendData();
     if (bd->PrevUserCallbackWindowFocus != nullptr && ImGui_ImplGlfw_ShouldChainCallback(window))
         bd->PrevUserCallbackWindowFocus(window, focused);
+
+    // Workaround for Linux: when losing focus with MouseIgnoreButtonUpWaitForFocusLoss set, we will temporarily ignore subsequent Mouse Up events
+    bd->MouseIgnoreButtonUp = (bd->MouseIgnoreButtonUpWaitForFocusLoss && focused == 0);
+    bd->MouseIgnoreButtonUpWaitForFocusLoss = false;
 
     ImGuiIO& io = ImGui::GetIO();
     io.AddFocusEvent(focused != 0);
@@ -967,6 +977,7 @@ void ImGui_ImplGlfw_NewFrame()
     io.DeltaTime = bd->Time > 0.0 ? (float)(current_time - bd->Time) : (float)(1.0f / 60.0f);
     bd->Time = current_time;
 
+    bd->MouseIgnoreButtonUp = false;
     ImGui_ImplGlfw_UpdateMouseData();
     ImGui_ImplGlfw_UpdateMouseCursor();
 
@@ -1105,6 +1116,11 @@ static void ImGui_ImplGlfw_CreateWindow(ImGuiViewport* viewport)
     ImGui_ImplGlfw_Data* bd = ImGui_ImplGlfw_GetBackendData();
     ImGui_ImplGlfw_ViewportData* vd = IM_NEW(ImGui_ImplGlfw_ViewportData)();
     viewport->PlatformUserData = vd;
+
+    // Workaround for Linux: ignore mouse up events corresponding to losing focus of the previously focused window (#7733, #3158, #7922)
+#ifdef __linux__
+    bd->MouseIgnoreButtonUpWaitForFocusLoss = true;
+#endif
 
     // GLFW 3.2 unfortunately always set focus on glfwCreateWindow() if GLFW_VISIBLE is set, regardless of GLFW_FOCUSED
     // With GLFW 3.3, the hint GLFW_FOCUS_ON_SHOW fixes this problem
